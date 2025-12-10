@@ -122,4 +122,12 @@ class Scraper():
             self.get_author_df().to_excel(writer, sheet_name="authors", index=False)
             self.extract_tags().to_excel(writer, sheet_name="tags", index=False)
 
+    def top_5_author(self):
+        df = self.__dataframe
+        return df['author'].value_counts().head(5)
+    
+    def top_X_most_used_tags(self, top: int):
+        return self.extract_tags().sort_values("count", ascending=False).head(top).reset_index()
 
+    def mean_quote(self):
+        return self.__dataframe["quote"].str.len().mean()
