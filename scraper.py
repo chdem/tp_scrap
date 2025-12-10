@@ -1,5 +1,6 @@
 import time
 from bs4 import BeautifulSoup
+import pandas as pd
 import requests
 
 
@@ -11,16 +12,32 @@ class Scraper():
 
     def __init__(self, logger):
         self._logger = logger
+        self.__nb_pages_scrapped = 0
+        self.__dataframe = None
+
+    @property
+    def quotes_df(self):
+        return self.__dataframe
+    
+    @property
+    def nb_pages_in_soups(self):
+        return self.__nb_pages_scrapped
 
     def page_crawler(self, url: str, max: int):
 
-        pages = {}
+        self._logger.info(f"Début du crawl de {url}")
+        self._logger.info(f"Max pages : {max}")
+        soups = {}
         i = 1
         while i <= max:
 
-            page = self.fetch_page(f"{url}{i}")
+            current_url = f"{url}{i}"
+
+            self._logger.info(f"--Scrap de {current_url}")
+
+            page = self.fetch_page(current_url)
             soup = BeautifulSoup(page, "lxml")
-            pages[i] = soup
+            soups[i] = soup
 
             has_next = soup.find(class_="next")
 
@@ -29,11 +46,13 @@ class Scraper():
                 break
 
             i+=1
-            time.sleep(2)
-        
 
-        pages["nb_pages"] = i
-        return pages
+            self._logger.info(f"-- Fin du scrap de {current_url}")
+            time.sleep(2)
+
+        self.nb_pages_scrapped = i
+        self.__dataframe = self.extract_quotes(soups)
+        self._logger.info(f"Fin du scrap de {url}")
             
 
     def fetch_page(self, url: str, timeout:int =10):
@@ -45,6 +64,7 @@ class Scraper():
                 timeout=timeout
             )
             response.raise_for_status()
+            self._logger.info(f"Status : {response.status_code}")
             return response.text
 
         except requests.Timeout:
@@ -62,3 +82,44 @@ class Scraper():
         except requests.RequestException as e:
             self._logger.error(f"Erreur générale: {e}")
             return None
+
+    def extract_quotes(self, soups)-> pd.DataFrame:
+        all_quotes = []
+        for page, soup in soups.items():
+            quotes = soup.find_all(class_="quote")
+            for quote in quotes:
+                row = {
+                    "quote": quote.find(class_="text").text,
+                    "author": quote.find(class_="author").text,
+                    "tags": [tag.text for tag in quote.find_all(class_="tag")],
+                    "page": page
+                    }
+                all_quotes.append(row)
+        
+        return pd.DataFrame(all_quotes)
+    
+    def extract_tags(self):
+        tag_list = {}
+        for tags in self.__dataframe["tags"]:
+            for tag in tags:
+                tag_list[tag] = tag_list.get(tag, 0) + 1
+
+        return pd.DataFrame(
+            list(tag_list.items()),
+            columns=['tag', 'count']
+            )
+
+    def get_author_df(self):
+        return (
+            self.__dataframe
+                .groupby("author", as_index=False)
+                .agg(count=("quote", "count"))
+                )
+    
+    def save_to_excel(self, file):
+        with pd.ExcelWriter(file, mode="w", engine="openpyxl") as writer:
+            self.__dataframe.to_excel(writer, sheet_name="données", index=False)
+            self.get_author_df().to_excel(writer, sheet_name="authors", index=False)
+            self.extract_tags().to_excel(writer, sheet_name="tags", index=False)
+
+
